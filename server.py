@@ -142,7 +142,7 @@ def udp_status_route():
 def udp_server():
     global last_udp_time
     UDP_IP = "0.0.0.0"
-    UDP_PORT = 2547
+    UDP_PORT = 2500
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((UDP_IP, UDP_PORT))
     print(f"📡 Listening on UDP port {UDP_PORT}")
