@@ -4,17 +4,17 @@ import threading
 import csv
 import time
 import os
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-current = {"location": "", "x": "", "y": "", "active": False}
+current = {"location": "", "x": "", "y": "", "active": False, "filename": ""}
 history_rows = []
 udp_status = {"active": False}
 last_udp_time = 0
 
 @app.route("/")
 def index():
-    html = """
-    <!doctype html>
+    html = """<!doctype html>
     <html>
     <head>
         <title>LoRa + WiFi Data Logger</title>
@@ -108,8 +108,7 @@ def index():
             fetchUdpStatus();
         </script>
     </body>
-    </html>
-    """
+    </html>"""
     return render_template_string(html,
                                   active=current["active"],
                                   location=current["location"],
@@ -118,11 +117,22 @@ def index():
 
 @app.route("/start", methods=["POST"])
 def start():
-    current["location"] = request.form["location"]
-    current["x"] = request.form["x"]
-    current["y"] = request.form["y"]
-    current["active"] = True
-    print("▶️ Started logging")
+    location = request.form["location"]
+    safe_location = secure_filename(location)
+    filename = os.path.join("csv", f"{safe_location}.csv")
+
+    # สร้างโฟลเดอร์ csv หากยังไม่มี
+    if not os.path.exists("csv"):
+        os.makedirs("csv")
+
+    current.update({
+        "location": location,
+        "x": request.form["x"],
+        "y": request.form["y"],
+        "active": True,
+        "filename": filename
+    })
+    print("▶️ Started logging:", filename)
     return index()
 
 @app.route("/stop", methods=["POST"])
@@ -150,54 +160,60 @@ def udp_server():
     data_row = {f"tx{i}": None for i in range(1, 5)}
     data_row.update({f"wifi{i}": "0" for i in range(1, 7)})
 
-    file_exists = os.path.exists("dataset.csv")
-    with open("dataset.csv", "a", newline="") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["location", "x", "y"] +
-                            [f"tx{i}" for i in range(1, 5)] +
-                            [f"wifi{i}" for i in range(1, 7)])
+    filename = None
+    f = None
+    writer = None
 
-        while True:
-            sock.settimeout(1.0)
-            try:
-                data, _ = sock.recvfrom(1024)
-                msg = data.decode().strip()
-                udp_status["active"] = True
-                last_udp_time = time.time()
-                print(f"📥 UDP Received: {msg}")
+    while True:
+        sock.settimeout(1.0)
+        try:
+            data, _ = sock.recvfrom(1024)
+            msg = data.decode().strip()
+            udp_status["active"] = True
+            last_udp_time = time.time()
+            print(f"📥 UDP Received: {msg}")
 
-                if ":" in msg:
-                    label, rssi = [x.strip().lower() for x in msg.split(":")]
-                    if label in data_row:
-                        data_row[label] = rssi
+            if ":" in msg:
+                label, rssi = [x.strip().lower() for x in msg.split(":")]
+                if label in data_row:
+                    data_row[label] = rssi
 
-            except socket.timeout:
-                if time.time() - last_udp_time > 3:
-                    if udp_status["active"]:
-                        print("❌ No UDP received in the last 3 seconds.")
-                    udp_status["active"] = False
+        except socket.timeout:
+            if time.time() - last_udp_time > 3:
+                if udp_status["active"]:
+                    print("❌ No UDP received in the last 3 seconds.")
+                udp_status["active"] = False
 
-            if current["active"] and all(data_row[f"tx{i}"] is not None for i in range(1, 5)):
-                row = [
-                    current["location"],
-                    current["x"],
-                    current["y"]
-                ] + [data_row[f"tx{i}"] for i in range(1, 5)] + \
-                    [data_row[f"wifi{i}"] for i in range(1, 7)]
+        if current["active"] and all(data_row[f"tx{i}"] is not None for i in range(1, 5)):
+            if filename != current["filename"]:
+                if f:
+                    f.close()
+                filename = current["filename"]
+                file_exists = os.path.exists(filename)
+                f = open(filename, "a", newline="")
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["location", "x", "y"] +
+                                    [f"tx{i}" for i in range(1, 5)] +
+                                    [f"wifi{i}" for i in range(1, 7)])
 
-                writer.writerow(row)
-                f.flush()
-                history_rows.append(row)
-                if len(history_rows) > 100:
-                    history_rows.pop(0)
+            row = [current["location"], current["x"], current["y"]] + \
+                  [data_row[f"tx{i}"] for i in range(1, 5)] + \
+                  [data_row[f"wifi{i}"] for i in range(1, 7)]
 
-                print("✅ Row saved:", row)
+            writer.writerow(row)
+            f.flush()
+            history_rows.append(row)
+            if len(history_rows) > 100:
+                history_rows.pop(0)
 
-                for i in range(1, 5):
-                    data_row[f"tx{i}"] = None
-                for i in range(1, 7):
-                    data_row[f"wifi{i}"] = "0"
+            print("✅ Row saved:", row)
+
+            # Reset data_row
+            for i in range(1, 5):
+                data_row[f"tx{i}"] = None
+            for i in range(1, 7):
+                data_row[f"wifi{i}"] = "0"
 
 if __name__ == "__main__":
     threading.Thread(target=udp_server, daemon=True).start()
