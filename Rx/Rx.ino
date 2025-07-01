@@ -3,22 +3,18 @@
 #include <WiFiUdp.h>
 #include <map>
 
-// 🔧 LoRa config
 #define BANDWIDTH        0
 #define SPREADING_FACTOR 9
 
-// 🌀 ความถี่ที่ RX จะวนรับทีละรอบ
-const float freqs[] = {915.0, 915.5, 916.0,916.5};
+const float freqs[] = {915.0, 915.5, 916.0, 916.5};
 int currentFreqIndex = 0;
 unsigned long lastHopTime = 0;
-unsigned long hopInterval = 500;  // ms
+const unsigned long hopInterval = 120;  // ปรับให้ไวขึ้นแต่ยังพอรับทัน
 
-// 🌐 UDP config
 WiFiUDP udp;
-const char* udp_host = "172.20.0.89";
+const char* udp_host = "192.168.172.184";
 const int udp_port = 2500;
 
-// 📡 WiFi BSSID ที่ต้องการอ่าน RSSI
 std::map<String, String> fixedWiFiLabels = {
   {"9C:8C:D8:05:25:C0", "WiFi1"},
   {"9C:8C:D8:03:B2:A0", "WiFi2"},
@@ -39,7 +35,6 @@ void setup() {
   heltec_setup();
   both.println("🚀 RX Real-time: Multi-Frequency LoRa + WiFi RSSI → UDP");
 
-  // ☑️ Init LoRa
   if (radio.begin() != RADIOLIB_ERR_NONE) {
     both.println("❌ LoRa init failed!");
     while (true);
@@ -50,13 +45,12 @@ void setup() {
   radio.setFrequency(freqs[currentFreqIndex]);
   radio.startReceive();
 
-  // ☑️ Init WiFi
   WiFi.mode(WIFI_STA);
-  WiFi.begin("PNU@WiFi", "");  // 🔁 เปลี่ยน SSID และรหัสหากจำเป็น
+  WiFi.begin("MR.MAD", "12345678");
 
   both.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    delay(400);
     both.print(".");
   }
   both.println(" ✅ Connected!");
@@ -67,18 +61,17 @@ void setup() {
 void loop() {
   heltec_loop();
 
-  // ✅ รับ LoRa ถ้ามี
+  // ✅ รับ LoRa ถ้ามีข้อมูล
   String received;
   int status = radio.receive(received);
   if (status == RADIOLIB_ERR_NONE) {
     int rssi = radio.getRSSI();
-    String message = received + ": " + String(rssi) ;
-    sendUDPMessage(message);
-    radio.startReceive();  // กลับไปฟังใหม่
+    sendUDPMessage(received + ": " + String(rssi));
+    radio.startReceive();
   }
 
-  // 🔁 สลับความถี่ทุก hopInterval ms
-  if (millis() - lastHopTime > hopInterval) {
+  // 🔁 เปลี่ยนความถี่ LoRa ทุก hopInterval
+  if (millis() - lastHopTime >= hopInterval) {
     currentFreqIndex = (currentFreqIndex + 1) % (sizeof(freqs) / sizeof(freqs[0]));
     radio.setFrequency(freqs[currentFreqIndex]);
     radio.startReceive();
@@ -86,19 +79,16 @@ void loop() {
     both.printf("🔄 Switched to %.1f MHz\n", freqs[currentFreqIndex]);
   }
 
-  // 📶 สแกน WiFi BSSID ที่สนใจ
+  // 📶 WiFi Scan ทุก 2 วิ แทนที่จะทำถี่เกินไป
   static unsigned long lastScanTime = 0;
   const unsigned long scanInterval = 2000;
 
-  if (millis() - lastScanTime > scanInterval) {
+  if (millis() - lastScanTime >= scanInterval) {
     int n = WiFi.scanNetworks(false, true);
     for (int i = 0; i < n; ++i) {
       String bssid = WiFi.BSSIDstr(i);
-      int rssi = WiFi.RSSI(i);
-
       if (fixedWiFiLabels.count(bssid)) {
-        String label = fixedWiFiLabels[bssid];
-        String msg = label + ": " + String(rssi);
+        String msg = fixedWiFiLabels[bssid] + ": " + String(WiFi.RSSI(i));
         sendUDPMessage(msg);
       }
     }
