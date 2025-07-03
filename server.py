@@ -52,6 +52,7 @@ def index():
                 Status: <span id="udp-status" style="font-weight:bold;"></span><br>
                 {% if active %}
                     <b>Location:</b> {{ location }} | <b>X:</b> {{ x }} | <b>Y:</b> {{ y }}<br>
+                    📊 จำนวนแถวที่บันทึกในตำแหน่งนี้: <b id="row-count">0</b><br>
                 {% endif %}
             </div>
 
@@ -102,13 +103,22 @@ def index():
                 }
             }
 
+            async function fetchRowCount() {
+                const res = await fetch("/row_count");
+                const data = await res.json();
+                document.getElementById("row-count").textContent = data.row_count;
+            }
+
             setInterval(fetchData, 1000);
             setInterval(fetchUdpStatus, 1000);
+            setInterval(fetchRowCount, 1000);
             fetchData();
             fetchUdpStatus();
+            fetchRowCount();
         </script>
     </body>
     </html>"""
+
     return render_template_string(html,
                                   active=current["active"],
                                   location=current["location"],
@@ -121,7 +131,6 @@ def start():
     safe_location = secure_filename(location)
     filename = os.path.join("csv", f"{safe_location}.csv")
 
-    # สร้างโฟลเดอร์ csv หากยังไม่มี
     if not os.path.exists("csv"):
         os.makedirs("csv")
 
@@ -149,6 +158,11 @@ def latest_all():
 def udp_status_route():
     return jsonify({"active": udp_status["active"]})
 
+@app.route("/row_count")
+def row_count():
+    count = sum(1 for row in history_rows if row[0] == current["location"])
+    return jsonify({"row_count": count})
+
 def udp_server():
     global last_udp_time
     UDP_IP = "0.0.0.0"
@@ -171,7 +185,7 @@ def udp_server():
             msg = data.decode().strip()
             udp_status["active"] = True
             last_udp_time = time.time()
-            print(f"📥 UDP Received: {msg}")
+            print(f"📅 UDP Received: {msg}")
 
             if ":" in msg:
                 label, rssi = [x.strip().lower() for x in msg.split(":")]
@@ -204,12 +218,11 @@ def udp_server():
             writer.writerow(row)
             f.flush()
             history_rows.append(row)
-            if len(history_rows) > 100:
+            if len(history_rows) > 100000:
                 history_rows.pop(0)
 
             print("✅ Row saved:", row)
 
-            # Reset data_row
             for i in range(1, 5):
                 data_row[f"tx{i}"] = None
             for i in range(1, 7):
