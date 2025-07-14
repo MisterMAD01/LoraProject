@@ -15,7 +15,7 @@ unsigned long hopInterval = 500;  // ms
 
 // 🌐 UDP config
 WiFiUDP udp;
-const char* udp_host = "172.22.192.1";
+const char* udp_host = "172.20.2.131";
 const int udp_port = 2500;
 
 // 📡 WiFi BSSID ที่ต้องการอ่าน RSSI
