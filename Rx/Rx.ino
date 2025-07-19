@@ -15,7 +15,7 @@ unsigned long hopInterval = 500;  // ms
 
 // 🌐 UDP config
 WiFiUDP udp;
-const char* udp_host = "172.20.0.133";
+const char* udp_host = "192.168.97.184";
 const int udp_port = 2500;
 
 // 📡 WiFi BSSID ที่ต้องการอ่าน RSSI
@@ -52,7 +52,7 @@ void setup() {
 
   // ☑️ Init WiFi
   WiFi.mode(WIFI_STA);
-  WiFi.begin("PNU@WiFi", "");  // 🔁 เปลี่ยน SSID และรหัสหากจำเป็น
+  WiFi.begin("11PNU@WiFi", "12345678");  // 🔁 เปลี่ยน SSID และรหัสหากจำเป็น
 
   both.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
