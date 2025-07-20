@@ -9,8 +9,8 @@ from sklearn.preprocessing import LabelEncoder
 df = pd.read_csv("test/datadisease.csv")
 df.fillna(0, inplace=True)
 
-X = df.drop("disease", axis=1)
-y = df["disease"]
+X = df.drop(['x', 'y', 'location'], axis=1)
+y = df['location']
 
 # Encode target labels
 le = LabelEncoder()
