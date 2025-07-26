@@ -1,57 +1,56 @@
-from flask import Flask, request, render_template_string, send_file
+from flask import Flask, request, render_template_string, send_file, redirect, jsonify
 import threading
 import csv
 import os
 import io
 import time
 import socket
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import pickle
+import joblib as jb
 import numpy as np
 
 app = Flask(__name__)
 
-current = {"active": False}  # สถานะเปิด/ปิดแสดงจุด
-history_rows = []  # โหลดข้อมูล CSV ไว้ (ถ้าใช้)
-latest_values = {}  # ค่าล่าสุดที่รับจาก UDP หรือโมเดลทำนาย
+last_labels = []
+current = {"active": False}
+history_rows = []
+latest_values = {}
 
 udp_status = {"active": False}
 last_udp_time = 0
 
-model = None  # โมเดลสำหรับทำนาย
+model = None
 
-# สร้าง dict เก็บ history RSSI แต่ละตัว
 history = {
-    'tx1': [],
-    'tx2': [],
-    'tx3': [],
-    'tx4': [],
-    'wifi1': [],
-    'wifi2': [],
-    'wifi3': [],
-    'wifi4': [],
-    'wifi5': [],
-    'wifi6': [],
+    'tx1': [], 'tx2': [], 'tx3': [], 'tx4': [],
+    'wifi1': [], 'wifi2': [], 'wifi3': [], 'wifi4': [], 'wifi5': [], 'wifi6': []
 }
 
-MAX_HISTORY_LEN = 50  # เก็บแค่ 50 จุดล่าสุด
+MAX_HISTORY_LEN = 50
 
+label_encoder = None
 
-# โหลดโมเดลจากไฟล์ตอนเริ่ม
 def load_model():
-    global model
-    model_path = os.path.join("model", "model11.pkl")
+    global model, label_encoder
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # <<-- Path ของไฟล์นี้
+
+    model_path = os.path.join(base_dir, "knn.pkl")
+    encoder_path = os.path.join(base_dir, "label_encoder.pkl")
+
+    
     if os.path.exists(model_path):
-        with open(model_path, "rb") as f:
-            model = pickle.load(f)
-        print("✅ Loaded ML model from model11.pkl")
+        model = jb.load(model_path)
+        print("✅ Loaded ML model from bestparaknn.pkl")
     else:
         print("❌ Model file not found:", model_path)
+    
+    if os.path.exists(encoder_path):
+        label_encoder = jb.load(encoder_path)
+        print("✅ Loaded Label Encoder")
+    else:
+        print("⚠️ Label encoder not found")
 
 
-# UDP Server Thread รับข้อมูล
+
 def udp_server():
     global last_udp_time, latest_values, udp_status, history
     UDP_IP = "0.0.0.0"
@@ -74,7 +73,6 @@ def udp_server():
             msg = data.decode().strip()
             udp_status["active"] = True
             last_udp_time = time.time()
-            # รับข้อมูลรูปแบบ "tx1: -45"
             if ":" in msg:
                 label, val = [x.strip().lower() for x in msg.split(":")]
                 if label in data_row:
@@ -82,184 +80,292 @@ def udp_server():
                         data_row[label] = float(val)
                     except:
                         pass
-
             latest_values = data_row.copy()
-
-            # เก็บ history ของทุก key
             for k in history.keys():
                 v = data_row.get(k)
                 if v is None:
-                    # ถ้าไม่มีค่า ให้เก็บ NaN เพื่อไม่ให้กราฟขาด
                     v = np.nan
                 history[k].append(v)
                 if len(history[k]) > MAX_HISTORY_LEN:
                     history[k].pop(0)
-
         except socket.timeout:
             if time.time() - last_udp_time > 3:
                 udp_status["active"] = False
 
+location_map = {
+    "A1": (140, 239),
+    "A10": (396, 237),
+    "A11": (419, 237),
+    "A12": (451, 237),
+    "A13": (481, 237),
+    "A14": (503, 237),
+    "A15": (532, 237),
+    "A16": (563, 237),
+    "A17": (586, 237),
+    "A18": (616, 237),
+    "A19": (647, 237),
+    "A2": (167, 237),
+    "A20": (674, 237),
+    "A21": (704, 237),
+    "A22": (733, 237),
+    "A23": (751, 237),
+    "A24": (780, 237),
+    "A25": (813, 237),
+    "A26": (840, 237),
+    "A27": (865, 237),
+    "A28": (896, 237),
+    "A29": (925, 237),
+    "A3": (197, 239),
+    "A30": (957, 237),
+    "A31": (986, 237),
+    "A32": (1012, 237),
+    "A33": (1042, 237),
+    "A34": (1073, 237),
+    "A35": (1096, 237),
+    "A36": (1124, 239),
+    "A37": (1157, 239),
+    "A38": (1178, 239),
+    "A39": (1203, 239),
+    "A4": (219, 237),
+    "A40": (1237, 239),
+    "A5": (249, 237),
+    "A6": (283, 237),
+    "A7": (311, 237),
+    "A8": (333, 237),
+    "A9": (365, 237),
+    "B1": (139, 272),
+    "B17": (582, 272),
+    "B18": (619, 272),
+    "B19": (643, 272),
+    "B2": (169, 272),
+    "B20": (673, 255),
+    "B21": (696, 272),
+    "B22": (727, 272),
+    "B23": (755, 272),
+    "B24": (783, 272),
+    "B39": (1205, 275),
+    "B40": (1237, 275),
+    "C1": (135, 303),
+    "C17": (585, 303),
+    "C18": (617, 303),
+    "C19": (641, 303),
+    "C2": (167, 303),
+    "C20": (672, 303),
+    "C21": (696, 303),
+    "C22": (727, 303),
+    "C23": (758, 303),
+    "C24": (784, 303),
+    "C39": (1205, 303),
+    "C40": (1233, 303),
+    "D1": (141, 340),
+    "D17": (586, 339),
+    "D18": (613, 339),
+    "D19": (642, 339),
+    "D2": (165, 340),
+    "D20": (672, 339),
+    "D21": (691, 339),
+    "D22": (726, 339),
+    "D23": (759, 339),
+    "D24": (788, 339),
+    "D39": (1203, 334),
+    "D40": (1233, 334),
+    "E1": (136, 370),
+    "E17": (587, 370),
+    "E18": (610, 370),
+    "E19": (642, 370),
+    "E2": (161, 370),
+    "E20": (667, 370),
+    "E21": (696, 370),
+    "E22": (730, 370),
+    "E23": (759, 370),
+    "E24": (788, 370),
+    "E39": (1203, 370),
+    "E40": (1237, 370),
+    "F1": (139, 400),
+    "F17": (588, 400),
+    "F18": (613, 400),
+    "F19": (644, 383),
+    "F2": (165, 400),
+    "F20": (675, 400),
+    "F21": (696, 400),
+    "F22": (729, 400),
+    "F23": (755, 400),
+    "F24": (788, 400),
+    "F39": (1205, 400),
+    "F40": (1237, 400),
+    "G1": (139, 430),
+    "G10": (387, 430),
+    "G11": (422, 430),
+    "G12": (448, 430),
+    "G13": (479, 430),
+    "G14": (502, 430),
+    "G15": (536, 430),
+    "G16": (557, 430),
+    "G17": (588, 430),
+    "G18": (620, 430),
+    "G19": (642, 430),
+    "G2": (167, 430),
+    "G20": (676, 430),
+    "G21": (701, 430),
+    "G22": (732, 430),
+    "G23": (763, 430),
+    "G24": (788, 430),
+    "G25": (314, 430),
+    "G26": (846, 430),
+    "G27": (873, 430),
+    "G28": (898, 430),
+    "G29": (930, 430),
+    "G3": (195, 430),
+    "G30": (955, 430),
+    "G31": (982, 430),
+    "G32": (1014, 430),
+    "G33": (1042, 430),
+    "G34": (1068, 430),
+    "G35": (1093, 430),
+    "G36": (1122, 430),
+    "G37": (1152, 430),
+    "G38": (1176, 430),
+    "G39": (1202, 430),
+    "G4": (226, 430),
+    "G40": (1231, 430),
+    "G5": (255, 430),
+    "G6": (281, 430),
+    "G7": (307, 430),
+    "G8": (341, 430),
+    "G9": (363, 430),
+}
+def smooth_history(key, window=5):
+    values = history.get(key, [])
+    if len(values) < window:
+        return values[-1] if values else 0.0
+    return np.mean(values[-window:])
 
-# ฟังก์ชันทำนายตำแหน่ง x,y ด้วยโมเดล
 def predict_position():
-    global latest_values, model
-    if model is None:
-        return None, None
+    global latest_values, model, label_encoder, last_labels
+    if model is None or label_encoder is None:
+        return None, None, None
 
-    # เตรียมข้อมูล features จาก latest_values ตามที่โมเดลต้องการ
-    features = []
-    keys_order = ['tx1', 'tx2', 'tx3', 'tx4', 'wifi1', 'wifi2', 'wifi3', 'wifi4', 'wifi5', 'wifi6']
-    for k in keys_order:
-        v = latest_values.get(k)
-        if v is None:
-            v = 0.0
-        features.append(float(v))
-
+    features = [smooth_history(k) for k in [
+        'tx1', 'tx2', 'tx3', 'tx4',
+        'wifi1', 'wifi2', 'wifi3', 'wifi4', 'wifi5', 'wifi6'
+    ]]
     X = np.array(features).reshape(1, -1)
-    pred = model.predict(X)
-    # สมมติโมเดลทำนายตำแหน่ง (x,y) ออกมาเป็น array เช่น [x,y]
-    if len(pred.shape) == 2 and pred.shape[1] == 2:
-        return int(pred[0][0]), int(pred[0][1])
+
+    pred_encoded = model.predict(X)[0]
+    label = label_encoder.inverse_transform([pred_encoded])[0]
+
+    last_labels.append(label)
+    if len(last_labels) > 3:
+        last_labels.pop(0)
+
+    if last_labels.count(label) >= 2:
+        x, y = location_map.get(label, (None, None))
+        return x, 663 - y if y is not None else None, label
     else:
-        return None, None
+        return None, None, None
 
 
-# หน้าเว็บหลัก
 @app.route("/")
 def index():
     html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>ตำแหน่งอุปกรณ์</title>
+        <title>ตำแหน่งอุปกรณ์ (Indoor)</title>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
         <style>
-            body { font-family: Arial; background: #f0f0f0; padding: 20px; }
-            .container { background: white; padding: 20px; border-radius: 10px; max-width: 700px; margin: auto; box-shadow: 0 0 10px rgba(0,0,0,0.2); }
-            h2 { color: #333; }
-            button { font-size: 16px; padding: 10px 20px; margin-top: 10px; border: none; border-radius: 5px; cursor: pointer; }
-            .start { background: #28a745; color: white; }
-            .stop { background: #dc3545; color: white; }
-            img { max-width: 100%; border: 1px solid #ccc; margin-top: 20px; }
+            #map { height: 80vh; border: 1px solid #ccc; }
+            .control { padding: 10px; background: #fff; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <h2>📍 ตำแหน่งที่ทำนายจากโมเดล</h2>
-
-            <form action="/toggle" method="post">
-                <button class="{{ 'stop' if active else 'start' }}">
-                    {{ '⏹ หยุดแสดงตำแหน่ง' if active else '▶️ เริ่มแสดงตำแหน่ง' }}
-                </button>
+        <div class="control">
+            <form action="/toggle" method="post" style="display:inline;">
+                <button type="submit">{{ '⏹ หยุดแสดงตำแหน่ง' if active else '▶️ เริ่มแสดงตำแหน่ง' }}</button>
             </form>
-
-            <p>สถานะ UDP: <strong style="color: {{ 'green' if udp_active else 'red' }}">{{ 'เชื่อมต่อแล้ว' if udp_active else 'รอข้อมูล...' }}</strong></p>
-
-            <img src="/plot" alt="แผนที่" id="mapimg">
-
-            <h2>📈 กราฟเส้นประวัติ RSSI (tx1-4, wifi1-6)</h2>
-            <img src="/lineplot" alt="กราฟเส้น RSSI" style="width:100%; max-width:700px; border:1px solid #ccc;">
-
+            <span>สถานะ UDP: <strong style="color: {{ 'green' if udp_active else 'red' }}">{{ 'เชื่อมต่อแล้ว' if udp_active else 'รอข้อมูล...' }}</strong></span>
         </div>
+        <div class="control">
+    พิกัดเมาส์: <span id="mouse-coords">(x, y)</span>
+    <p>ตำแหน่งทำนายล่าสุด: <span id="predicted-label">–</span></p>
 
-        <script>
-          function reloadMap() {
-            const img = document.getElementById('mapimg');
-            img.src = '/plot?' + new Date().getTime();
-          }
+</div>
 
-          {% if active %}
-          setInterval(reloadMap, 2000);
-          {% endif %}
-        </script>
+        <div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+<script>
+const bounds = [[0, 0], [663, 1366]]; // [[y1,x1], [y2,x2]]
+const map = L.map('map', {
+    crs: L.CRS.Simple,
+    minZoom: -1
+});
+const image = L.imageOverlay('/static/map.jpg', bounds).addTo(map);
+map.fitBounds(bounds);
+
+const pixelsPerMeterX = 1366 / 58;
+const pixelsPerMeterY = 663 / 30;
+
+let marker = null;
+
+// ✅ แสดง marker จากตำแหน่งทำนาย
+async function updateMarker() {
+    const res = await fetch("/api/position");
+    const data = await res.json();
+
+    if (data.x != null && data.y != null) {
+        const lat = data.y;
+        const lng = data.x;
+
+        if (!marker) {
+            marker = L.marker([lat, lng]).addTo(map);
+        } else {
+            marker.setLatLng([lat, lng]);
+        }
+
+        document.getElementById('predicted-label').innerText = data.label || "–";
+
+        const x_meter = data.x / pixelsPerMeterX;
+        const y_meter = data.y / pixelsPerMeterY;
+        document.getElementById('predicted-coords').innerText = `x ≈ ${x_meter.toFixed(2)} ม., y ≈ ${y_meter.toFixed(2)} ม.`;
+    }
+}
+
+map.on('mousemove', function(e) {
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
+    const x_meter = lng / pixelsPerMeterX;
+    const y_meter = lat / pixelsPerMeterY;
+    document.getElementById('mouse-coords').innerText = `x ≈ ${x_meter.toFixed(2)} ม., y ≈ ${y_meter.toFixed(2)} ม.`;
+});
+
+// ✅ เรียกทุก 2 วินาที (เฉพาะตอน active)
+{% if active %}
+setInterval(updateMarker, 2000);
+{% endif %}
+</script>
+
     </body>
     </html>
     """
-    return render_template_string(html,
-                                  active=current["active"],
-                                  udp_active=udp_status["active"])
+    return render_template_string(html, active=current["active"], udp_active=udp_status["active"])
 
-
-# ปุ่ม toggle start/stop แสดงจุด
 @app.route("/toggle", methods=["POST"])
 def toggle():
     current["active"] = not current["active"]
-    return index()
+    return redirect("/")
 
-
-# เสิร์ฟรูปแผนที่ พร้อมจุดทำนาย (ถ้าเปิดแสดง)
-@app.route("/plot")
-def plot():
-    img_path = os.path.join("map", "map.jpg")
-    if not os.path.exists(img_path):
-        return "ไม่พบไฟล์รูปแผนที่", 404
-
-    img = plt.imread(img_path)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.imshow(img)
-
-    # ถ้าเปิดแสดง ให้ทำนายตำแหน่งและ plot จุดบนแผนที่
-    if current["active"]:
-        x, y = predict_position()
-        if x is not None and y is not None:
-            ax.plot(x, y, 'ro', markersize=10, alpha=0.8)
-            ax.text(x + 5, y, f"({x},{y})", color='red', fontsize=12)
-
-    ax.axis('off')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    plt.close(fig)
-    return send_file(buf, mimetype='image/png')
-
-
-# เสิร์ฟกราฟเส้นประวัติ RSSI ของทุกตัว
-@app.route("/lineplot")
-def lineplot():
-    fig, ax = plt.subplots(figsize=(10, 5))
-
-    colors = {
-        'tx1': 'red',
-        'tx2': 'blue',
-        'tx3': 'green',
-        'tx4': 'purple',
-        'wifi1': 'orange',
-        'wifi2': 'brown',
-        'wifi3': 'pink',
-        'wifi4': 'cyan',
-        'wifi5': 'magenta',
-        'wifi6': 'gray',
-    }
-
-    plotted_any = False
-    for key, vals in history.items():
-        if vals:
-            ax.plot(vals, label=key, color=colors.get(key, None))
-            plotted_any = True
-
-    ax.set_ylim(-100, 0)  # RSSI ช่วงปกติ (dBm)
-    ax.set_title("RSSI History for tx1-4 and wifi1-6")
-    ax.set_xlabel("Time (latest to oldest)")
-    ax.set_ylabel("RSSI (dBm)")
-    ax.legend()
-    ax.grid(True)
-
-    if not plotted_any:
-        ax.text(0.5, 0.5, "No data yet", ha='center', va='center', fontsize=14)
-        ax.axis('off')
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    plt.close(fig)
-    return send_file(buf, mimetype='image/png')
+@app.route("/api/position")
+def api_position():
+    x, y, label = predict_position()
+    return jsonify({"x": x, "y": y, "label": label})
 
 
 if __name__ == "__main__":
     os.makedirs("model", exist_ok=True)
-    os.makedirs("map", exist_ok=True)
-
+    os.makedirs("static", exist_ok=True)  # map.jpg should be inside /static
     load_model()
-
     threading.Thread(target=udp_server, daemon=True).start()
-
     app.run(host="0.0.0.0", port=1000)

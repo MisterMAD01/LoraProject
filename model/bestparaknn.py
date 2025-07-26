@@ -6,10 +6,10 @@ from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
 
 # === STEP 1: Load dataset ===
-df = pd.read_csv("test/datadisease.csv")
+df = pd.read_csv("C:/LoraProject/LoraProject/csv/data.csv")
 df.fillna(0, inplace=True)
 
-X = df.drop(['x', 'y'], axis=1)
+X = df.drop(['x', 'y', 'location'], axis=1)
 Y = df["location"]
 
 # Encode target labels
@@ -20,7 +20,7 @@ y_encoded = le.fit_transform(Y)
 param_grid = {
     "n_neighbors": [3, 5, 7, 9, 11],
     "weights": ['uniform', 'distance'],
-    'metric': [],
+    'metric': ['minkowski'],
     'p':[1, 2],
     'algorithm': ['auto', 'ball_tree', 'kd_tree'],
     'leaf_size': [20, 30, 40]
@@ -29,9 +29,9 @@ param_grid = {
 # === STEP 3: Set up cross-validation ===
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-# === STEP 4: Create GridSearchCV ===
+# === STEP 4: Create GridSearchCV === 
 grid_search = GridSearchCV(
-    estimator=KNeighborsClassifier(random_state=42),
+    estimator=KNeighborsClassifier(),
     param_grid=param_grid,
     cv=cv,
     scoring="f1_macro",
@@ -51,7 +51,7 @@ for i, row in cv_results.iterrows():
     f1_macro = row['mean_test_score']
 
     # Train model again to check training accuracy
-    model = KNeighborsClassifier(**params, random_state=42)
+    model = KNeighborsClassifier(**params)
     model.fit(X, y_encoded)
     y_pred_train = model.predict(X)
     acc = accuracy_score(y_encoded, y_pred_train)
