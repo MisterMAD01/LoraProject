@@ -1,8 +1,6 @@
 from flask import Flask, request, render_template_string, send_file, redirect, jsonify
 import threading
-import csv
 import os
-import io
 import time
 import socket
 import joblib as jb
@@ -12,32 +10,30 @@ app = Flask(__name__)
 
 last_labels = []
 current = {"active": False}
-history_rows = []
 latest_values = {}
-
 udp_status = {"active": False}
 last_udp_time = 0
 
 model = None
 label_encoder = None
+MAX_HISTORY_LEN = 50
 
 history = {
     'tx1': [], 'tx2': [], 'tx3': [], 'tx4': [],
     'wifi1': [], 'wifi2': [], 'wifi3': [], 'wifi4': [], 'wifi5': [], 'wifi6': []
 }
 
-MAX_HISTORY_LEN = 50
 
 def load_model():
     global model, label_encoder
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    model_path = os.path.join(base_dir, "knn.pkl")
+    model_path = os.path.join(base_dir, "Rf.pkl")
     encoder_path = os.path.join(base_dir, "label_encoder.pkl")
 
     if os.path.exists(model_path):
         model = jb.load(model_path)
-        print("✅ Loaded ML model from Rf.pkl")
+        print("✅ Loaded ML model")
     else:
         print("❌ Model file not found:", model_path)
 
@@ -63,7 +59,7 @@ def udp_server():
     buffer = {}
 
     while True:
-        sock.settimeout(2.0)
+        sock.settimeout(1.0)
         try:
             data, _ = sock.recvfrom(1024)
             msg = data.decode().strip()
@@ -75,27 +71,23 @@ def udp_server():
                 try:
                     buffer[label] = float(val)
                 except:
-                    pass
+                    buffer[label] = 0.0
 
-            # เมื่อครบ 4 tx (tx1 ถึง tx4) ค่อยส่งให้โมเดล
-            if all(f"tx{i}" in buffer for i in range(1, 5)):
-                full_row = {}
-                for i in range(1, 5):
-                    full_row[f"tx{i}"] = buffer.get(f"tx{i}", np.nan)
-                for i in range(1, 7):
-                    full_row[f"wifi{i}"] = buffer.get(f"wifi{i}", 0.0)
+            tx_keys = [f"tx{i}" for i in range(1, 5)]
+            wifi_keys = [f"wifi{i}" for i in range(1, 7)]
 
-                latest_values = full_row.copy()
+            if all(k in buffer for k in tx_keys):
+                for k in wifi_keys:
+                    if k not in buffer:
+                        buffer[k] = 0.0
 
-                for k in history.keys():
-                    v = full_row.get(k)
-                    if v is None:
-                        v = 0.0 if "wifi" in k else np.nan
-                    history[k].append(v)
+                for k in tx_keys + wifi_keys:
+                    latest_values[k] = buffer[k]
+                    history[k].append(buffer[k])
                     if len(history[k]) > MAX_HISTORY_LEN:
                         history[k].pop(0)
 
-                buffer.clear()  # clear buffer ทุกครั้งที่ส่งข้อมูลชุดใหม่
+                buffer = {}
 
         except socket.timeout:
             if time.time() - last_udp_time > 3:
@@ -108,40 +100,6 @@ def smooth_history(key, window=5):
         return values[-1] if values else 0.0
     return np.mean(values[-window:])
 
-
-def predict_position():
-    global latest_values, model, label_encoder, last_labels
-
-    if model is None or label_encoder is None:
-        return None, None, None
-
-    tx_keys = ['tx1', 'tx2', 'tx3', 'tx4']
-    if not all(smooth_history(k) is not np.nan and smooth_history(k) is not None for k in tx_keys):
-        return None, None, None
-
-    features = []
-    for k in tx_keys:
-        val = smooth_history(k)
-        features.append(val if val is not np.nan and val is not None else 0.0)
-
-    for k in ['wifi1', 'wifi2', 'wifi3', 'wifi4', 'wifi5', 'wifi6']:
-        val = smooth_history(k)
-        features.append(val if val is not np.nan and val is not None else 0.0)
-
-    X = np.array(features).reshape(1, -1)
-
-    pred_encoded = model.predict(X)[0]
-    label = label_encoder.inverse_transform([pred_encoded])[0]
-
-    last_labels.append(label)
-    if len(last_labels) > 3:
-        last_labels.pop(0)
-
-    if last_labels.count(label) >= 2:
-        x, y = location_map.get(label, (None, None))
-        return x, 663 - y if y is not None else None, label
-    else:
-        return None, None, None
 
 location_map = {
     "A1": (140, 239),
@@ -286,6 +244,37 @@ location_map = {
     "G9": (363, 430),
 }
 
+def predict_position():
+    global latest_values, model, label_encoder, last_labels
+    if model is None or label_encoder is None:
+        return None, None, None
+
+    keys = [f"tx{i}" for i in range(1, 5)] + [f"wifi{i}" for i in range(1, 7)]
+    features = []
+    for k in keys:
+        val = smooth_history(k)
+        features.append(val if val is not None else 0.0)
+
+    X = np.array(features).reshape(1, -1)
+
+    try:
+        pred_encoded = model.predict(X)[0]
+        label = label_encoder.inverse_transform([pred_encoded])[0]
+    except Exception as e:
+        print(f"❌ Predict error: {e}")
+        return None, None, None
+
+    last_labels.append(label)
+    if len(last_labels) > 3:
+        last_labels.pop(0)
+
+    if last_labels.count(label) >= 2:
+        x, y = location_map.get(label, (None, None))
+        return x, 663 - y if y is not None else None, label
+    else:
+        return None, None, None
+
+
 @app.route("/")
 def index():
     html = """
@@ -309,9 +298,9 @@ def index():
             <span>สถานะ UDP: <strong style="color: {{ 'green' if udp_active else 'red' }}">{{ 'เชื่อมต่อแล้ว' if udp_active else 'รอข้อมูล...' }}</strong></span>
         </div>
         <div class="control">
-            พิกัดเมาส์: <span id="mouse-coords">(x, y)</span>
+            <p>พิกัดเมาส์: <span id="mouse-coords">(x, y)</span></p>
             <p>ตำแหน่งทำนายล่าสุด: <span id="predicted-label">–</span></p>
-            <p id="predicted-coords">–</p>
+            <p>พิกัดทำนาย: <span id="predicted-coords">–</span></p>
         </div>
         <div id="map"></div>
 
@@ -358,10 +347,9 @@ map.on('mousemove', function(e) {
 });
 
 {% if active %}
-setInterval(updateMarker, 2000);
+setInterval(updateMarker, 1000);
 {% endif %}
 </script>
-
     </body>
     </html>
     """
@@ -381,8 +369,7 @@ def api_position():
 
 
 if __name__ == "__main__":
-    os.makedirs("model", exist_ok=True)
-    os.makedirs("static", exist_ok=True)  # ใส่ map.jpg ไว้ใน static/
+    os.makedirs("static", exist_ok=True)
     load_model()
     threading.Thread(target=udp_server, daemon=True).start()
     app.run(host="0.0.0.0", port=1000)
