@@ -20,7 +20,7 @@ y_encoded = le.fit_transform(Y)
 param_grid = {
     "n_neighbors": [3, 5, 7, 9, 11],
     "weights": ['uniform', 'distance'],
-    'metric': [],
+    'metric': ['minkowski'],
     'p':[1, 2],
     'algorithm': ['auto', 'ball_tree', 'kd_tree'],
     'leaf_size': [20, 30, 40]
