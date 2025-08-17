@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
 # โหลดภาพ
-img = mpimg.imread('map.jpg')  # เปลี่ยนชื่อไฟล์ภาพตามของคุณ
+img = mpimg.imread('C:\LoraProject\LoraProject\map\map.jpg')  # เปลี่ยนชื่อไฟล์ภาพตามของคุณ
 
 # ฟังก์ชันเมื่อคลิกเมาส์
 def on_click(event):

@@ -9,15 +9,15 @@ from sklearn.metrics import confusion_matrix
 import joblib as jb
 import numpy as np
 
-data = pd.read_csv("test/datadisease.csv")
+data = pd.read_csv("C:/LoraProject/LoraProject/csv/data.csv")
 data.fillna(0, inplace=True)
 
-x = data.drop(['disease'], axis=1).values
+x = data.drop(['x', 'y', 'location'], axis=1).values
 le = LabelEncoder()
-y = data['disease']
+y = data['location']
 y_encode = le.fit_transform(y)
 
-model = RandomForestClassifier(n_estimators=300, random_state=42, class_weight= 'balanced', max_depth= 20, min_samples_leaf=1, min_samples_split= 4)
+model = RandomForestClassifier(n_estimators=200, random_state=42, class_weight= 'balanced', max_depth= 20, min_samples_leaf=2, min_samples_split= 2)
 
 cv = StratifiedKFold(n_splits=5, shuffle= True, random_state=42)
 y_pred = cross_val_predict(model, x, y_encode, cv=cv)
@@ -36,3 +36,11 @@ print(classification_report(y_encode, y_pred, target_names=le.classes_))
 
 print("\n=== Confusion Report Per Class ===")
 cm = confusion_matrix(y_encode, y_pred)
+
+model.fit(x, y_encode)
+
+# บันทึกโมเดลเป็นไฟล์ .pkl
+jb.dump(model, "Rf.pkl")
+
+# บันทึก LabelEncoder ด้วย (สำคัญสำหรับ decode ตอนใช้งานจริง)
+jb.dump(le, "label_encoder.pkl")
